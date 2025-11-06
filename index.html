@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SnapGrid Blocks – Web Demo</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: sans-serif;
+      background: #f0f0f0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    h1 {
+      margin-top: 20px;
+    }
+    #game-container {
+      display: flex;
+      margin: 20px;
+      gap: 20px;
+    }
+    /* Board styling */
+    #board {
+      position: relative;
+      width: 400px;
+      height: 400px;
+      border: 2px solid #444;
+      display: grid;
+      grid-template-columns: repeat(8, 1fr);
+      grid-template-rows: repeat(8, 1fr);
+      background: #fff;
+    }
+    .cell {
+      border: 1px solid #ddd;
+      box-sizing: border-box;
+      width: 100%;
+      height: 100%;
+      position: relative;
+    }
+    .cell.filled {
+      background: #90caf9;
+    }
+    .cell.highlight-valid {
+      background: #c8e6c9;
+    }
+    .cell.highlight-invalid {
+      background: #ffcdd2;
+    }
+    /* Queue styling */
+    #queue {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    .piece {
+      position: relative;
+      display: inline-block;
+      cursor: grab;
+    }
+    .piece-cell {
+      position: absolute;
+      border: 1px solid #333;
+      box-sizing: border-box;
+    }
+    #info {
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+  <h1>SnapGrid Blocks – Web Demo</h1>
+  <div id="game-container">
+    <div id="board"></div>
+    <div>
+      <div id="queue"></div>
+      <div id="info">
+        <p>Drag a piece from the queue and drop it onto the board.</p>
+        <p id="score">Score: 0</p>
+        <p id="status"></p>
+      </div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      const BOARD_SIZE = 8;
+      const BOARD_CELL_SIZE = 50; // px per cell on the board
+      const QUEUE_CELL_SIZE = 30; // px per cell for queue pieces
+
+      // Define a set of shapes for pieces (relative coordinates)
+      const SHAPES = [
+        { blocks: [[0,0]], color: '#ff5722' }, // single
+        { blocks: [[0,0],[1,0]], color: '#4caf50' }, // 2 horizontal
+        { blocks: [[0,0],[0,1]], color: '#3f51b5' }, // 2 vertical
+        { blocks: [[0,0],[1,0],[0,1],[1,1]], color: '#ff9800' }, // 2x2 square
+        { blocks: [[0,0],[1,0],[2,0]], color: '#2196f3' }, // 3 horizontal
+        { blocks: [[0,0],[0,1],[0,2]], color: '#9c27b0' }, // 3 vertical
+        { blocks: [[0,0],[1,0],[0,1]], color: '#009688' }, // L corner
+        { blocks: [[0,0],[1,0],[2,0],[1,1]], color: '#e91e63' }, // T shape
+        { blocks: [[0,0],[1,0],[2,0],[0,1],[1,1]], color: '#795548' } // F-like
+      ];
+
+      // State of the board: 0 = empty, 1 = filled
+      const boardState = [];
+      for (let r = 0; r < BOARD_SIZE; r++) {
+        boardState[r] = Array(BOARD_SIZE).fill(0);
+      }
+      let score = 0;
+      let currentPieces = [];
+      let activeHighlight = [];
+
+      const boardEl = document.getElementById('board');
+      const queueEl = document.getElementById('queue');
+      const scoreEl = document.getElementById('score');
+      const statusEl = document.getElementById('status');
+
+      // Create board cells
+      function initBoard() {
+        boardEl.innerHTML = '';
+        for (let r = 0; r < BOARD_SIZE; r++) {
+          for (let c = 0; c < BOARD_SIZE; c++) {
+            const cell = document.createElement('div');
+            cell.classList.add('cell');
+            cell.dataset.row = r;
+            cell.dataset.col = c;
+            boardEl.appendChild(cell);
+          }
+        }
+        // Attach drag events to the board
+        boardEl.addEventListener('dragover', onBoardDragOver);
+        boardEl.addEventListener('dragleave', onBoardDragLeave);
+        boardEl.addEventListener('drop', onBoardDrop);
+      }
+
+      // Generate random pieces to fill the queue
+      function initQueue() {
+        currentPieces = [];
+        for (let i = 0; i < 3; i++) {
+          currentPieces.push(createRandomPiece());
+        }
+        updateQueueUI();
+      }
+
+      function createRandomPiece() {
+        const idx = Math.floor(Math.random() * SHAPES.length);
+        return { shape: idx };
+      }
+
+      // Create a DOM element for a piece (for the queue)
+      function createPieceElement(piece, scale) {
+        const shapeDef = SHAPES[piece.shape];
+        const pieceDiv = document.createElement('div');
+        pieceDiv.classList.add('piece');
+        pieceDiv.setAttribute('draggable', 'true');
+        const xs = shapeDef.blocks.map(b => b[0]);
+        const ys = shapeDef.blocks.map(b => b[1]);
+        const width = (Math.max(...xs) + 1) * scale;
+        const height = (Math.max(...ys) + 1) * scale;
+        pieceDiv.style.width = width + 'px';
+        pieceDiv.style.height = height + 'px';
+        // Position each block inside the piece
+        shapeDef.blocks.forEach(([x, y]) => {
+          const cell = document.createElement('div');
+          cell.classList.add('piece-cell');
+          cell.style.left = (x * scale) + 'px';
+          cell.style.top = (y * scale) + 'px';
+          cell.style.width = scale + 'px';
+          cell.style.height = scale + 'px';
+          cell.style.backgroundColor = shapeDef.color;
+          pieceDiv.appendChild(cell);
+        });
+        return pieceDiv;
+      }
+
+      function updateQueueUI() {
+        queueEl.innerHTML = '';
+        currentPieces.forEach((piece, idx) => {
+          const elem = createPieceElement(piece, QUEUE_CELL_SIZE);
+          elem.dataset.index = idx;
+          elem.addEventListener('dragstart', onPieceDragStart);
+          queueEl.appendChild(elem);
+        });
+      }
+
+      function onPieceDragStart(ev) {
+        const idx = Number(ev.currentTarget.dataset.index);
+        ev.dataTransfer.setData('text/plain', idx);
+        // Provide a custom drag image scaled to board size to improve placement feel
+        const ghost = createPieceElement(currentPieces[idx], BOARD_CELL_SIZE);
+        ghost.style.opacity = '0.7';
+        document.body.appendChild(ghost);
+        ev.dataTransfer.setDragImage(ghost, ghost.offsetWidth / 2, ghost.offsetHeight / 2);
+        // Remove ghost after drag starts
+        setTimeout(() => document.body.removeChild(ghost), 0);
+      }
+
+      function clearHighlights() {
+        activeHighlight.forEach(({ row, col }) => {
+          const cell = getCell(row, col);
+          cell.classList.remove('highlight-valid', 'highlight-invalid');
+        });
+        activeHighlight = [];
+      }
+
+      function getCell(row, col) {
+        return boardEl.querySelector(`[data-row="${row}"][data-col="${col}"]`);
+      }
+
+      function onBoardDragOver(ev) {
+        ev.preventDefault();
+        const idxData = ev.dataTransfer.getData('text/plain');
+        const idx = idxData ? Number(idxData) : null;
+        if (idx === null || isNaN(idx)) return;
+        const piece = currentPieces[idx];
+        // Compute target row/col based on pointer position
+        const rect = boardEl.getBoundingClientRect();
+        const x = ev.clientX - rect.left;
+        const y = ev.clientY - rect.top;
+        const col = Math.floor(x / BOARD_CELL_SIZE);
+        const row = Math.floor(y / BOARD_CELL_SIZE);
+        clearHighlights();
+        if (!piece) return;
+        // Determine if piece fits at (row, col)
+        const shapeDef = SHAPES[piece.shape];
+        let valid = true;
+        const positions = [];
+        shapeDef.blocks.forEach(([sx, sy]) => {
+          const r = row + sy;
+          const c = col + sx;
+          if (r < 0 || r >= BOARD_SIZE || c < 0 || c >= BOARD_SIZE || boardState[r][c] !== 0) {
+            valid = false;
+          }
+          positions.push({ row: r, col: c });
+        });
+        // Apply highlight classes
+        positions.forEach(pos => {
+          const cell = getCell(pos.row, pos.col);
+          if (!cell) return;
+          cell.classList.add(valid ? 'highlight-valid' : 'highlight-invalid');
+          activeHighlight.push(pos);
+        });
+      }
+
+      function onBoardDragLeave(ev) {
+        // Clear highlights when leaving board area
+        clearHighlights();
+      }
+
+      function onBoardDrop(ev) {
+        ev.preventDefault();
+        const idx = Number(ev.dataTransfer.getData('text/plain'));
+        if (isNaN(idx)) return;
+        const piece = currentPieces[idx];
+        const rect = boardEl.getBoundingClientRect();
+        const x = ev.clientX - rect.left;
+        const y = ev.clientY - rect.top;
+        const col = Math.floor(x / BOARD_CELL_SIZE);
+        const row = Math.floor(y / BOARD_CELL_SIZE);
+        clearHighlights();
+        if (!piece) return;
+        // Validate placement
+        const shapeDef = SHAPES[piece.shape];
+        let valid = true;
+        shapeDef.blocks.forEach(([sx, sy]) => {
+          const r = row + sy;
+          const c = col + sx;
+          if (r < 0 || r >= BOARD_SIZE || c < 0 || c >= BOARD_SIZE || boardState[r][c] !== 0) {
+            valid = false;
+          }
+        });
+        if (!valid) {
+          statusEl.textContent = 'Invalid placement! Try a different position.';
+          return;
+        }
+        // Place piece on board
+        shapeDef.blocks.forEach(([sx, sy]) => {
+          const r = row + sy;
+          const c = col + sx;
+          boardState[r][c] = 1;
+          const cell = getCell(r, c);
+          cell.classList.add('filled');
+        });
+        // Remove piece from queue and generate new one if needed
+        currentPieces.splice(idx, 1);
+        currentPieces.push(createRandomPiece());
+        updateQueueUI();
+        // Check for completed rows or columns
+        let linesCleared = 0;
+        // Check rows
+        for (let r = 0; r < BOARD_SIZE; r++) {
+          if (boardState[r].every(val => val === 1)) {
+            linesCleared++;
+            // Clear row
+            for (let c = 0; c < BOARD_SIZE; c++) {
+              boardState[r][c] = 0;
+              const cell = getCell(r, c);
+              cell.classList.remove('filled');
+            }
+          }
+        }
+        // Check columns
+        for (let c = 0; c < BOARD_SIZE; c++) {
+          let fullCol = true;
+          for (let r = 0; r < BOARD_SIZE; r++) {
+            if (boardState[r][c] !== 1) {
+              fullCol = false;
+              break;
+            }
+          }
+          if (fullCol) {
+            linesCleared++;
+            for (let r = 0; r < BOARD_SIZE; r++) {
+              boardState[r][c] = 0;
+              const cell = getCell(r, c);
+              cell.classList.remove('filled');
+            }
+          }
+        }
+        // Update score
+        if (linesCleared > 0) {
+          score += linesCleared * 10;
+          scoreEl.textContent = 'Score: ' + score;
+        }
+        statusEl.textContent = '';
+        // Check for game over: if none of the pieces fit anywhere
+        if (!canAnyPieceFit()) {
+          statusEl.textContent = 'Game over! No valid moves.';
+          // Optionally disable further dragging by removing dragstart listeners
+          Array.from(queueEl.children).forEach(elem => {
+            elem.removeEventListener('dragstart', onPieceDragStart);
+            elem.setAttribute('draggable', 'false');
+          });
+        }
+      }
+
+      function canAnyPieceFit() {
+        // For each piece in queue, check all possible positions
+        for (const piece of currentPieces) {
+          const shapeDef = SHAPES[piece.shape];
+          for (let row = 0; row < BOARD_SIZE; row++) {
+            for (let col = 0; col < BOARD_SIZE; col++) {
+              let fits = true;
+              for (const [sx, sy] of shapeDef.blocks) {
+                const r = row + sy;
+                const c = col + sx;
+                if (r < 0 || r >= BOARD_SIZE || c < 0 || c >= BOARD_SIZE || boardState[r][c] !== 0) {
+                  fits = false;
+                  break;
+                }
+              }
+              if (fits) return true;
+            }
+          }
+        }
+        return false;
+      }
+
+      // Initialize the game
+      initBoard();
+      initQueue();
+    })();
+  </script>
+</body>
+</html>
