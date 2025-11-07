@@ -57,6 +57,9 @@
     }
     .piece {
       position: relative;
+          -webkit-user-drag: none;
+    user-select: none;
+    touch-action: none;
       display: inline-block;
       cursor: grab;
     }
@@ -179,14 +182,15 @@
         currentPieces.forEach((piece, idx) => {
           const elem = createPieceElement(piece, QUEUE_CELL_SIZE);
           elem.dataset.index = idx;
-          elem.addEventListener('dragstart', onPieceDragStart);
+          elem.addEventListener('dragstart', );
           queueEl.appendChild(elem);
         });
       }
 
       function onPieceDragStart(ev) {
         const idx = Number(ev.currentTarget.dataset.index);
-        ev.dataTransfer.setData('text/plain', idx);
+            ev.dataTransfer.effectAllowed = 'move';
+          ev.dataTransfer.setData('text/plain', idx);
         // Provide a custom drag image scaled to board size to improve placement feel
         const ghost = createPieceElement(currentPieces[idx], BOARD_CELL_SIZE);
         ghost.style.opacity = '0.7';
@@ -201,18 +205,21 @@
           const cell = getCell(row, col);
           cell.classList.remove('highlight-valid', 'highlight-invalid');
         });
+            
         activeHighlight = [];
       }
 
       function getCell(row, col) {
-        return boardEl.querySelector(`[data-row="${row}"][data-col="${col}"]`);
+        
       }
 
       function onBoardDragOver(ev) {
         ev.preventDefault();
+            ev.dataTransfer.dropEffect = 'move';
         const idxData = ev.dataTransfer.getData('text/plain');
         const idx = idxData ? Number(idxData) : null;
         if (idx === null || isNaN(idx)) return;
+            
         const piece = currentPieces[idx];
         // Compute target row/col based on pointer position
         const rect = boardEl.getBoundingClientRect();
